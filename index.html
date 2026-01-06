@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>CCED - Participate</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body class="partBody">
+  <div class="partWrap">
+    <div class="partTop">
+      <div class="partBrand">
+        <img src="https://i.ibb.co/5xhDVpxs/1.png" alt="logo"/>
+        <div>
+          <div class="partWelcome">welcome to CCED forum interactive session</div>
+          <div class="small" style="color:#64748b;">Participant</div>
+        </div>
+      </div>
+      <div class="small" style="color:#64748b;">Live</div>
+    </div>
+
+    <div id="loading" class="card">Loading…</div>
+    <div id="err" class="card" style="display:none; border-color:#fecaca; background:#fff5f5; color:#7f1d1d;"></div>
+
+    <div id="main" class="card" style="display:none;">
+      <div style="font-weight:900;font-size:18px;" id="eventTitle"></div>
+      <div class="small" style="color:#64748b;margin-top:4px;">Answer the current question shown on the screen.</div>
+
+      <div style="margin-top:12px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div class="pill" id="qIndicator" style="background:#eef3ff;border-color:#dbe7ff;color:#0b2b55;">Question</div>
+        <div class="small" style="color:#64748b;">Controlled by results screen</div>
+      </div>
+
+      <div style="margin-top:14px; font-size:22px; font-weight:900;" id="questionTitle"></div>
+
+      <div style="margin-top:10px;">
+        <textarea id="answer" placeholder="Type your answer..."></textarea>
+      </div>
+
+      <div class="row">
+        <button id="submit" class="partBtn primary">Submit</button>
+        <button id="clear" class="partBtn secondary">Clear</button>
+      </div>
+
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+
+    const elLoading=document.getElementById('loading');
+    const elErr=document.getElementById('err');
+    const elMain=document.getElementById('main');
+    const elEventTitle=document.getElementById('eventTitle');
+    const elQIndicator=document.getElementById('qIndicator');
+    const elQTitle=document.getElementById('questionTitle');
+    const elAnswer=document.getElementById('answer');
+    const elMsg=document.getElementById('msg');
+
+    let eventId=null, questions=[], currentIndex=0, joinCode=null;
+
+    function showError(t){
+      elLoading.style.display='none';
+      elMain.style.display='none';
+      elErr.style.display='block';
+      elErr.textContent=t;
+    }
+
+    function render(){
+      if(!questions.length){
+        elQIndicator.textContent='Question';
+        elQTitle.textContent='No questions configured.';
+        return;
+      }
+      const q=questions[currentIndex] || questions[0];
+      elQIndicator.textContent='Question ' + (currentIndex+1) + ' / ' + questions.length;
+      elQTitle.textContent=q.title || '';
+      elAnswer.value='';
+      elMsg.textContent='';
+    }
+
+    async function resolveEventId(){
+      if(!code) return null;
+      const snap = await db.collection('codes').doc(code).get();
+      if(!snap.exists) return null;
+      const data = snap.data() || {};
+      return data.eventId || null;
+    }
+
+    async function submit(){
+      const text=(elAnswer.value||'').trim();
+      if(!text){ elMsg.textContent='Please type an answer.'; return; }
+      if(!eventId) return;
+
+      const btn=document.getElementById('submit');
+      btn.disabled=true; btn.style.opacity='0.7';
+      elMsg.textContent='Submitting...';
+
+      try{
+        const q=questions[currentIndex];
+        const payload={
+          questionId: q.id,
+          text,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        const writePromise = db.collection('events').doc(eventId).collection('answers').add(payload);
+        const timeoutPromise = new Promise((_,rej)=>setTimeout(()=>rej(new Error('Network timeout. Try again.')), 8000));
+        await Promise.race([writePromise, timeoutPromise]);
+        elMsg.textContent='Submitted. Thank you!';
+        setTimeout(()=>{ elAnswer.value=''; }, 600);
+      }catch(e){
+        console.error(e);
+        elMsg.textContent='Error: ' + (e && e.message ? e.message : e);
+      }finally{
+        btn.disabled=false; btn.style.opacity='1';
+      }
+    }
+
+    document.getElementById('clear').onclick=()=>{ elAnswer.value=''; elMsg.textContent=''; };
+    document.getElementById('submit').onclick=submit;
+
+    (async function start(){
+      try{
+        eventId = await resolveEventId();
+        if(!eventId) return showError('Invalid join code. Please scan the correct QR / link.');
+
+        const eventRef = db.collection('events').doc(eventId);
+        eventRef.onSnapshot((snap)=>{
+          if(!snap.exists) return showError('Event not found. Ask facilitator to recreate.');
+          const data=snap.data()||{};
+          joinCode = data.joinCode || code;
+          questions = Array.isArray(data.questions)?data.questions:[];
+          currentIndex = (typeof data.currentQuestion==='number') ? data.currentQuestion : 0;
+          elEventTitle.textContent = data.title || 'HSE Interactive Session';
+
+          elLoading.style.display='none';
+          elErr.style.display='none';
+          elMain.style.display='block';
+          render();
+        }, (err)=>{
+          console.error(err);
+          showError('Cannot read event. Check Firestore rules / network.');
+        });
+      }catch(e){
+        console.error(e);
+        showError('Error loading. ' + (e && e.message ? e.message : e));
+      }
+    })();
+  </script>
+</body>
+</html>
