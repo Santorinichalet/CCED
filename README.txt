@@ -1,0 +1,1 @@
+Slido-like results: bigger scaling + kiosk mode (?kiosk=1) + debug (?debug=1).
