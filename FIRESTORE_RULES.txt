@@ -1,0 +1,39 @@
+Firestore Rules (Public session)
+
+If you created Firestore in Production mode, it blocks everything (your 'Creating event...' hangs / 0 responses).
+
+Use these rules for this public live session:
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Mapping: join code -> eventId
+    match /codes/{code} {
+      allow read: if true;
+      allow create, update: if true; // public app
+    }
+
+    // Events: allow read to everyone
+    match /events/{eventId} {
+      allow read: if true;
+
+      // allow create (admin)
+      allow create: if true;
+
+      // allow update for moving currentQuestion (results page)
+      allow update: if true;
+
+      // answers subcollection: anyone can add answers, everyone can read (results)
+      match /answers/{answerId} {
+        allow read: if true;
+        allow create: if true;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
+
+Notes:
+- This is OPEN access (no login) as you requested.
+- If you need admin-only control later, we can add a secret key or Firebase Auth.
