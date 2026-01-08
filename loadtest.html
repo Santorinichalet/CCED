@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CCED Load Test</title>
+  <style>
+    body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:18px;color:#0b1b3a}
+    .card{max-width:900px;margin:0 auto;border:1px solid #e9eef7;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(16,24,40,.06)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+    input,select{padding:10px 12px;border:1px solid #d7deea;border-radius:12px;font-size:14px;width:100%}
+    label{font-weight:800;font-size:12px;color:#334155}
+    .col{flex:1;min-width:210px}
+    button{border:0;border-radius:12px;padding:10px 14px;font-weight:900;cursor:pointer}
+    .primary{background:#0b2b55;color:#fff}
+    .secondary{background:#eef3ff;color:#0b2b55}
+    .log{margin-top:12px;background:#0b1220;color:#dbeafe;padding:12px;border-radius:12px;min-height:120px;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap}
+    .warn{background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;border-radius:12px;padding:10px;margin-top:12px}
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>CCED Load Test</h2>
+  <div class="warn">⚠️ Use ONLY for testing. Delete this file after.</div>
+
+  <div class="row">
+    <div class="col">
+      <label>Admin password</label>
+      <input id="pw" type="password" autocomplete="off"/>
+    </div>
+    <div class="col">
+      <label>Join code</label>
+      <input id="code" autocomplete="off"/>
+    </div>
+    <div class="col">
+      <label>Question #</label>
+      <select id="qnum">
+        <option value="0">1</option>
+        <option value="1">2</option>
+        <option value="2">3</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <label>Total answers</label>
+      <input id="count" type="number" value="150" min="1"/>
+    </div>
+    <div class="col">
+      <label>Seconds</label>
+      <input id="seconds" type="number" value="60" min="1"/>
+    </div>
+    <div class="col">
+      <label>Words / phrases (comma separated)</label>
+      <input id="words" value="visibility,leadership,discipline,planning,supervision,communication,training,stop work,PTW,toolbox talk,field leadership,walk the talk,accountability,permit to work,line of fire,hazard awareness"/>
+    </div>
+  </div>
+
+  <div class="row">
+    <button class="primary" id="start">Start test</button>
+    <button class="secondary" id="stop" disabled>Stop</button>
+  </div>
+
+  <div class="log" id="log"></div>
+</div>
+
+<!-- Firebase (v8) -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+<script type="module">
+import { firebaseConfig } from "./firebase-config.js";
+
+/** CHANGE ONLY IF YOU WANT A DIFFERENT PASSWORD */
+const TEST_PASSWORD = "CCEDTEST2026";
+
+const logEl = document.getElementById('log');
+let timer = null, sent = 0, target = 0;
+
+// phrase controls
+const MAX_REPEAT_PER_PHRASE = 3;
+const phraseCounts = new Map();
+
+function log(msg){
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function pick(arr){
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function normalizeToken(t){
+  return String(t || '').trim();
+}
+
+function buildPhrase(tokens){
+  // Bias to 2-3 words (more realistic)
+  const r = Math.random();
+  const len = (r < 0.15) ? 1 : (r < 0.65 ? 2 : 3);
+
+  const parts = [];
+  const used = new Set();
+
+  // avoid repeating the same token within a phrase
+  let guard = 0;
+  while(parts.length < len && guard < 30){
+    guard++;
+    const tok = normalizeToken(pick(tokens));
+    if(!tok) continue;
+    const key = tok.toLowerCase();
+    if(used.has(key)) continue;
+    used.add(key);
+    parts.push(tok);
+  }
+
+  if(!parts.length) return "safety";
+  return parts.join(" ");
+}
+
+function canUsePhrase(phrase){
+  const k = phrase.toLowerCase();
+  const c = phraseCounts.get(k) || 0;
+  return c < MAX_REPEAT_PER_PHRASE;
+}
+
+function markPhrase(phrase){
+  const k = phrase.toLowerCase();
+  phraseCounts.set(k, (phraseCounts.get(k) || 0) + 1);
+}
+
+function pickNonOverusedPhrase(tokens, maxTries=120){
+  for(let i=0;i<maxTries;i++){
+    const phrase = buildPhrase(tokens);
+    if(canUsePhrase(phrase)) return phrase;
+  }
+  return null;
+}
+
+// Init Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+async function getEventId(code){
+  const snap = await db.collection('codes').doc(code).get();
+  if(!snap.exists) throw new Error("Invalid join code");
+  return snap.data().eventId;
+}
+
+async function getQuestions(eventId){
+  const snap = await db.collection('events').doc(eventId).get();
+  if(!snap.exists) throw new Error("Event not found");
+  return snap.data().questions || [];
+}
+
+async function sendOne(eventId, qid, text){
+  await db.collection('events').doc(eventId).collection('answers').add({
+    questionId: qid,
+    text: text,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+function stopTest(){
+  if(timer) clearInterval(timer);
+  timer = null;
+  log("Stopped");
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+}
+
+document.getElementById('stop').onclick = ()=> stopTest();
+
+document.getElementById('start').onclick = async ()=>{
+  try{
+    // reset counters each run
+    phraseCounts.clear();
+
+    const pw = document.getElementById('pw').value;
+    if(pw !== TEST_PASSWORD){ alert("Wrong password"); return; }
+
+    const joinCode = document.getElementById('code').value.trim();
+    const qnum = parseInt(document.getElementById('qnum').value, 10);
+    const count = parseInt(document.getElementById('count').value, 10);
+    const seconds = parseInt(document.getElementById('seconds').value, 10);
+
+    const phrasesRaw = document.getElementById('words').value
+      .split(',')
+      .map(s=>s.trim())
+      .filter(Boolean);
+
+    // expand phrases into tokens (words)
+    const tokens = [];
+    for(const p of phrasesRaw){
+      for(const w of p.split(/\s+/)){
+        const t = w.trim();
+        if(t) tokens.push(t);
+      }
+    }
+    if(tokens.length < 6) throw new Error("Add more words/phrases");
+    if(!joinCode) throw new Error("Enter join code");
+    if(!(count>0) || !(seconds>0)) throw new Error("Count/Seconds must be > 0");
+
+    log("Resolving event...");
+    const eventId = await getEventId(joinCode);
+    const questions = await getQuestions(eventId);
+    if(!questions.length) throw new Error("No questions in event");
+    const q = questions[qnum] || questions[0];
+
+    log(`Event: ${eventId}`);
+    log(`Question: ${q.title || "Question"}`);
+    log(`Sending ${count} answers in ${seconds}s (max repeat per phrase: ${MAX_REPEAT_PER_PHRASE})`);
+
+    sent = 0; target = count;
+
+    const interval = Math.max(120, Math.floor((seconds*1000)/count));
+
+    document.getElementById('start').disabled = true;
+    document.getElementById('stop').disabled = false;
+
+    timer = setInterval(async ()=>{
+      if(sent >= target){
+        clearInterval(timer);
+        timer = null;
+        log("DONE");
+        document.getElementById('start').disabled = false;
+        document.getElementById('stop').disabled = true;
+        return;
+      }
+
+      const phrase = pickNonOverusedPhrase(tokens);
+      if(!phrase){
+        log("STOP: exhausted phrases at max repeat. Add more words/phrases or lower Total answers.");
+        stopTest();
+        return;
+      }
+
+      sent++;
+      try{
+        await sendOne(eventId, q.id, phrase);
+        markPhrase(phrase);
+        if(sent % 10 === 0) log(`Sent ${sent}/${target}`);
+      }catch(e){
+        log("ERROR: " + (e?.message || e));
+        stopTest();
+      }
+    }, interval);
+
+  }catch(e){
+    log("ERROR: " + (e?.message || e));
+  }
+};
+</script>
+
+</body>
+</html>
