@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CCED - Event Export & Analysis</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#ffffff;color:#0b1b3a}
+    .top{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #e9eef7;gap:12px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{height:44px;width:auto;border:1px solid #e9eef7;border-radius:10px;padding:6px;background:#fff}
+    .h1{font-weight:900}
+    .wrap{max-width:1200px;margin:0 auto;padding:18px 20px 70px}
+    .card{background:#fff;border:1px solid #e9eef7;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(16,24,40,.06);margin-bottom:16px}
+    .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    @media(max-width:980px){.row{grid-template-columns:1fr}}
+    label{display:block;font-size:12px;color:#64748b;margin-bottom:6px;font-weight:800}
+    input,select{width:100%;padding:12px 12px;border:1px solid #e9eef7;border-radius:12px;font-weight:800}
+    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .btn{border:1px solid #e9eef7;background:#f8fafc;border-radius:12px;padding:10px 14px;font-weight:900;cursor:pointer;color:#0b1b3a}
+    .btn.primary{background:#0b2b55;color:#fff;border-color:#0b2b55}
+    .btn.danger{background:#fff5f5;border-color:#fecaca;color:#7f1d1d}
+    .muted{color:#64748b;font-size:12px}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid #e9eef7;background:#fff;font-weight:900}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:980px){.grid2{grid-template-columns:1fr}}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top}
+    th{font-size:12px;color:#64748b;font-weight:900}
+    td{font-weight:800}
+    .qTitle{font-size:18px;font-weight:900;margin:0 0 6px}
+    .mini{font-size:11px;color:#64748b}
+    .barWrap{margin-top:10px}
+    .bar{height:12px;border-radius:999px;background:#eef2ff;overflow:hidden;border:1px solid #e9eef7}
+    .bar > div{height:100%;background:#0b2b55;width:0%}
+    .hr{height:1px;background:#eef2f7;margin:12px 0}
+    .log{white-space:pre-wrap;background:#0b1220;color:#e5e7eb;border-radius:12px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;max-height:240px;overflow:auto}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">
+      <img src="https://i.ibb.co/5xhDVpxs/1.png" alt="logo"/>
+      <div>
+        <div class="h1">CCED Export & Analysis</div>
+        <div class="muted">Export answers per question to CSV/JSON + quick summary.</div>
+      </div>
+    </div>
+    <div class="pill" id="status">Idle</div>
+  </div>
+
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Join code</label>
+          <input id="joinCode" placeholder="e.g. 193824" inputmode="numeric"/>
+        </div>
+        <div>
+          <label>Max answers to fetch (safety)</label>
+          <input id="maxFetch" value="5000" inputmode="numeric"/>
+          <div class="mini">If your event is bigger, increase this number.</div>
+        </div>
+        <div>
+          <label>Top N per question</label>
+          <input id="topN" value="30" inputmode="numeric"/>
+        </div>
+      </div>
+
+      <div class="btns">
+        <button class="btn primary" id="load">Load & Analyze</button>
+        <button class="btn" id="downloadJson" disabled>Download JSON</button>
+        <button class="btn" id="downloadCsvAll" disabled>Download ALL CSV (ZIP)</button>
+        <button class="btn danger" id="clearUi">Clear UI</button>
+      </div>
+
+      <div class="hr"></div>
+      <div class="grid2">
+        <div>
+          <div class="pill">Event ID: <span id="eventId">—</span></div>
+          <div style="margin-top:8px" class="pill">Total answers: <span id="totalAnswers">0</span></div>
+          <div style="margin-top:8px" class="pill">Questions: <span id="totalQuestions">0</span></div>
+        </div>
+        <div>
+          <div class="muted" style="font-weight:900;margin-bottom:6px;">Log</div>
+          <div class="log" id="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="out"></div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <script>
+    const $ = (id)=>document.getElementById(id);
+    const statusEl = $("status");
+    const logEl = $("log");
+    const outEl = $("out");
+
+    function setStatus(text, ok=true){
+      statusEl.textContent = text;
+      statusEl.style.borderColor = ok ? "#e9eef7" : "#fecaca";
+      statusEl.style.background = ok ? "#fff" : "#fff5f5";
+      statusEl.style.color = ok ? "#0b1b3a" : "#7f1d1d";
+    }
+    function log(){
+      const args = Array.from(arguments);
+      const line = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+      logEl.textContent += line + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function clearUi(){
+      outEl.innerHTML = "";
+      logEl.textContent = "";
+      $("eventId").textContent="—";
+      $("totalAnswers").textContent="0";
+      $("totalQuestions").textContent="0";
+      $("downloadJson").disabled = true;
+      $("downloadCsvAll").disabled = true;
+      window.__EXPORT__ = null;
+      setStatus("Idle");
+    }
+
+    function safeName(s){
+      return String(s||"").replace(/[\/:*?"<>|]+/g," ").replace(/\s+/g," ").trim().slice(0,120);
+    }
+
+    function toCSV(rows){
+      const esc = (v) => {
+        const s = String(v ?? "");
+        if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+        return s;
+      };
+      return rows.map(r => r.map(esc).join(",")).join("\n");
+    }
+
+    function downloadBlob(filename, content, mime){
+      const blob = new Blob([content], {type: mime || "application/octet-stream"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+    }
+
+    async function resolveEventIdByCode(joinCode){
+      const snap = await db.collection("codes").doc(joinCode).get();
+      if(!snap.exists) return null;
+      return (snap.data()||{}).eventId || null;
+    }
+
+    async function fetchAllAnswersPaged(eventId, maxFetch){
+      const col = db.collection("events").doc(eventId).collection("answers");
+      const out = [];
+      let last = null;
+
+      async function page(q){
+        const snap = await q.get();
+        if(snap.empty) return {done:true, last:null};
+        for(const d of snap.docs){
+          out.push(Object.assign({id:d.id}, d.data()||{}));
+          if(out.length >= maxFetch) return {done:true, last:d};
+        }
+        return {done:false, last:snap.docs[snap.docs.length-1]};
+      }
+
+      try{
+        while(true){
+          let q = col.orderBy("createdAt").limit(500);
+          if(last) q = q.startAfter(last);
+          const r = await page(q);
+          if(r.done) break;
+          last = r.last;
+        }
+        return out;
+      }catch(e){
+        log("Ordered paging failed, fallback:", e.message || e);
+      }
+
+      last = null;
+      while(true){
+        let q = col.orderBy(firebase.firestore.FieldPath.documentId()).limit(500);
+        if(last) q = q.startAfter(last);
+        const r = await page(q);
+        if(r.done) break;
+        last = r.last;
+      }
+      return out;
+    }
+
+    function analyze(questions, answers, topN){
+      const qById = new Map((questions||[]).map(q => [q.id, q]));
+      const byQ = new Map();
+
+      for(const a of answers){
+        const qid = a.questionId || "unknown";
+        const t = String(a.text || "").trim();
+        if(!t) continue;
+        if(!byQ.has(qid)) byQ.set(qid, new Map());
+        const m = byQ.get(qid);
+        m.set(t, (m.get(t)||0) + 1);
+      }
+
+      const result = [];
+      for(const entry of byQ.entries()){
+        const qid = entry[0];
+        const m = entry[1];
+        const q = qById.get(qid);
+        const title = (q && q.title) ? q.title : qid;
+        const entries = Array.from(m.entries()).sort((a,b)=>b[1]-a[1]);
+        const total = entries.reduce((s,x)=>s + x[1], 0);
+        result.push({ qid, title, total, entries: entries.slice(0, topN), allEntries: entries });
+      }
+
+      const order = new Map((questions||[]).map((q,i)=>[q.id,i]));
+      result.sort((a,b)=>{
+        const ai = order.has(a.qid) ? order.get(a.qid) : 9999;
+        const bi = order.has(b.qid) ? order.get(b.qid) : 9999;
+        return ai - bi;
+      });
+
+      return result;
+    }
+
+    function render(analysis, joinCode){
+      outEl.innerHTML = "";
+      for(const item of analysis){
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const h = document.createElement("div");
+        h.innerHTML = `
+          <div class="qTitle">${item.title}</div>
+          <div class="mini">questionId: <b>${item.qid}</b> • total answers: <b>${item.total}</b></div>
+        `;
+        card.appendChild(h);
+
+        const btnRow = document.createElement("div");
+        btnRow.className = "btns";
+
+        const bCsv = document.createElement("button");
+        bCsv.className = "btn";
+        bCsv.textContent = "Download CSV (this question)";
+        bCsv.onclick = ()=> {
+          const rows = [["text","count"]];
+          item.allEntries.forEach(x=>rows.push([x[0], x[1]]));
+          downloadBlob(`CCED_${joinCode}_${safeName(item.title)}.csv`, toCSV(rows), "text/csv;charset=utf-8");
+        };
+
+        const bJson = document.createElement("button");
+        bJson.className = "btn";
+        bJson.textContent = "Download JSON (this question)";
+        bJson.onclick = ()=> {
+          const payload = {
+            joinCode: joinCode,
+            questionId: item.qid,
+            title: item.title,
+            total: item.total,
+            counts: item.allEntries.map(x=>({text:x[0], count:x[1]}))
+          };
+          downloadBlob(`CCED_${joinCode}_${safeName(item.title)}.json`, JSON.stringify(payload,null,2), "application/json");
+        };
+
+        btnRow.appendChild(bCsv);
+        btnRow.appendChild(bJson);
+        card.appendChild(btnRow);
+
+        const max = item.entries.length ? Math.max.apply(null, item.entries.map(x=>x[1])) : 0;
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        thead.innerHTML = `<tr><th style="width:45%">Top responses</th><th style="width:10%">Count</th><th>Share</th></tr>`;
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+
+        item.entries.forEach(x=>{
+          const text = x[0], count = x[1];
+          const share = item.total ? Math.round((count/item.total)*1000)/10 : 0;
+          const pct = max ? (count/max*100) : 0;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${text}</td>
+            <td>${count}</td>
+            <td>
+              <div class="barWrap">
+                <div class="bar"><div style="width:${pct}%;"></div></div>
+                <div class="mini">${share}%</div>
+              </div>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        card.appendChild(table);
+
+        outEl.appendChild(card);
+      }
+    }
+
+    $("clearUi").onclick = clearUi;
+
+    $("downloadJson").onclick = ()=>{
+      const data = window.__EXPORT__;
+      if(!data) return;
+      downloadBlob(`CCED_${data.joinCode}_event_export.json`, JSON.stringify(data,null,2), "application/json");
+    };
+
+    $("downloadCsvAll").onclick = async ()=>{
+      const data = window.__EXPORT__;
+      if(!data) return;
+      const zip = new JSZip();
+      for(const q of data.questions){
+        const rows = [["text","count"]];
+        (q.counts||[]).forEach(x=>rows.push([x.text, x.count]));
+        zip.file(`CCED_${data.joinCode}_${safeName(q.title)}.csv`, toCSV(rows));
+      }
+      const blob = await zip.generateAsync({type:"blob"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `CCED_${data.joinCode}_all_questions_csv.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+    };
+
+    $("load").onclick = async ()=>{
+      outEl.innerHTML = "";
+      logEl.textContent = "";
+      $("eventId").textContent="—";
+      $("totalAnswers").textContent="0";
+      $("totalQuestions").textContent="0";
+      $("downloadJson").disabled = true;
+      $("downloadCsvAll").disabled = true;
+      window.__EXPORT__ = null;
+
+      const joinCode = ($("joinCode").value || "").trim();
+      const maxFetch = Math.max(100, parseInt($("maxFetch").value || "5000", 10));
+      const topN = Math.max(5, parseInt($("topN").value || "30", 10));
+
+      if(!joinCode){
+        setStatus("Enter join code", false);
+        return;
+      }
+
+      try{
+        setStatus("Resolving code…");
+        log("joinCode:", joinCode);
+        const eventId = await resolveEventIdByCode(joinCode);
+        if(!eventId){
+          setStatus("Code not found / blocked", false);
+          log("ERROR: code not found in /codes");
+          return;
+        }
+        $("eventId").textContent = eventId;
+
+        setStatus("Loading event…");
+        const eventSnap = await db.collection("events").doc(eventId).get();
+        if(!eventSnap.exists){
+          setStatus("Event not found", false);
+          log("ERROR: events/{eventId} missing");
+          return;
+        }
+        const eventData = eventSnap.data() || {};
+        const questions = Array.isArray(eventData.questions) ? eventData.questions : [];
+        $("totalQuestions").textContent = String(questions.length);
+
+        setStatus("Fetching answers…");
+        log("Fetching answers up to", maxFetch);
+        const answers = await fetchAllAnswersPaged(eventId, maxFetch);
+        $("totalAnswers").textContent = String(answers.length);
+        log("Fetched answers:", answers.length);
+
+        setStatus("Analyzing…");
+        const analysis = analyze(questions, answers, topN);
+        render(analysis, joinCode);
+
+        const exportPayload = {
+          joinCode: joinCode,
+          eventId: eventId,
+          exportedAt: new Date().toISOString(),
+          questions: analysis.map(a => ({
+            questionId: a.qid,
+            title: a.title,
+            total: a.total,
+            counts: a.allEntries.map(x=>({text:x[0], count:x[1]}))
+          }))
+        };
+        window.__EXPORT__ = exportPayload;
+        $("downloadJson").disabled = false;
+        $("downloadCsvAll").disabled = false;
+
+        setStatus("Ready");
+        log("Done.");
+      }catch(e){
+        console.error(e);
+        setStatus("Failed: " + (e.message || e), false);
+        log("ERROR:", e.message || e);
+      }
+    };
+
+    (function(){
+      const p = new URLSearchParams(location.search);
+      const c = p.get("code");
+      if(c){ $("joinCode").value = c; }
+    })();
+  </script>
+</body>
+</html>
