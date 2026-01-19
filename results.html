@@ -18,8 +18,32 @@
     .joinBig{font-size:34px;font-weight:900;line-height:1.05;margin:10px 0 6px}
     .code{font-size:44px;font-weight:900;letter-spacing:3px}
     .qTitle{font-size:42px;font-weight:900;line-height:1.12;margin:0 0 16px}
-    .bubbleArea{min-height:56vh;display:flex;flex-wrap:wrap;gap:14px;align-content:center;justify-content:center;padding:6px}
-    .bubble{background:#eef6ff;border:1px solid #cfe3ff;color:#0b2b55;padding:14px 20px;border-radius:14px;font-weight:900;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis}
+    .bubbleArea{
+  min-height:56vh;
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;                 /* أقل */
+  align-content:flex-start; /* بدل center */
+  justify-content:center;
+  padding:10px;
+}
+
+   .bubble{
+  background:#eef6ff;
+  border:1px solid #cfe3ff;
+  color:#0b2b55;
+  padding:14px 20px;
+  border-radius:14px;
+  font-weight:900;
+
+  /* FIX: prevent huge empty spaces */
+  white-space:normal;          /* بدل nowrap */
+  overflow-wrap:anywhere;      /* يكسر الكلمات الطويلة */
+  word-break:break-word;
+  max-width:min(920px, 92%);   /* لا تمتد زيادة */
+  text-align:center;
+}
+
     .bubble.small{font-size:20px}
     .bubble.med{font-size:32px}
     .bubble.big{font-size:50px;padding:16px 24px}
