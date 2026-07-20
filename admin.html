@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>CCED - Admin</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:18px;}
+    .wrap{max-width:980px;margin:0 auto;}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+    @media(max-width:900px){.row{grid-template-columns:1fr;}}
+    .card{border:1px solid #e5e7eb;border-radius:14px;padding:16px;}
+    label{display:block;font-weight:800;margin:10px 0 6px;}
+    input, select{width:100%;padding:12px;border-radius:12px;border:1px solid #d1d5db;}
+    select{background:#fff;}
+    button{border:0;border-radius:12px;padding:12px 14px;font-weight:900;cursor:pointer;}
+    .primary{background:#111;color:#fff;}
+    .secondary{background:#f3f4f6;color:#111;border:1px solid #e5e7eb;}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace;background:#f9fafb;}
+    .small{font-size:12px;color:#6b7280;}
+    .brand{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+    .brand img{height:52px;background:#fff;border:1px solid #eee;border-radius:10px;padding:6px;}
+    .brand-edit{flex:1;min-width:0;}
+    .brand-edit input{border:0;background:transparent;width:100%;padding:4px 6px;border-radius:10px;}
+    .brand-edit input:focus{outline:2px solid #e5e7eb;background:#fff;}
+    #brandTitle{font-weight:900;font-size:18px;color:#111;}
+    #brandSub{font-size:12px;color:#6b7280;}
+    .timeRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;}
+    .timeRow > div{flex:1;min-width:150px;}
+    .check{display:flex;gap:8px;align-items:center;font-weight:800;}
+    .check input{width:auto;padding:0;border-radius:0;border:0;}
+    .hint{margin-top:6px;}
+    .twoCol{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    @media(max-width:520px){.twoCol{grid-template-columns:1fr;}}
+    .qBlock{border:1px solid #eef0f3;border-radius:12px;padding:12px;margin-top:14px;background:#fafbfc;}
+    .qBlock h4{margin:0 0 4px;font-size:15px;}
+    .optGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;}
+    @media(max-width:520px){.optGrid{grid-template-columns:1fr;}}
+    .optGrid input{padding:10px;font-size:14px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <img src="https://i.ibb.co/5xhDVpxs/1.png" alt="logo"/>
+      <div class="brand-edit">
+        <input id="brandTitle" value="welcome to CCED forum interactive session" aria-label="Header title (beside logo)"/>
+        <input id="brandSub" value="Admin (creates event + share links)" aria-label="Header subtitle (beside logo)"/>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <div style="font-weight:900;font-size:18px;">Create event</div>
+
+        <label>Event title</label>
+        <input id="title" placeholder="HSE Interactive Session"/>
+
+        <div id="questionsHost"></div>
+
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+          <button id="create" class="primary">Create</button>
+          <button id="reset" class="secondary">Reset</button>
+        </div>
+        <div id="status" class="small" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:900;font-size:18px;">Share</div>
+
+        <label>Join code (show on screen)</label>
+        <input id="code" class="mono" readonly/>
+
+        <label>Participant link</label>
+        <input id="plink" class="mono" readonly/>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+          <button id="copyP" class="secondary">Copy</button>
+        </div>
+
+        <label style="margin-top:14px;">Results link (projector)</label>
+        <input id="rlink" class="mono" readonly/>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+          <button id="copyR" class="secondary">Copy</button>
+        </div>
+
+        <div class="small" style="margin-top:12px;">
+          Note: If Firestore rules are in Production mode (deny), event creation will hang/fail.
+          Apply the provided rules first.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="firebase-config.js"></script>
+  <script>
+    const NUM_QUESTIONS = 3;
+    const NUM_OPTIONS = 5;
+
+    function baseUrl(){
+      const u = new URL(location.href);
+      const basePath = u.pathname.substring(0, u.pathname.lastIndexOf('/')+1);
+      return u.origin + basePath;
+    }
+    function genCode(){
+      return String(Math.floor(100000 + Math.random()*900000));
+    }
+
+    const DEFAULT_BRAND_TITLE = 'welcome to CCED forum interactive session';
+    const DEFAULT_BRAND_SUB   = 'Admin (creates event + share links)';
+
+    const elStatus=document.getElementById('status');
+    const elBrandTitle=document.getElementById('brandTitle');
+    const elBrandSub=document.getElementById('brandSub');
+    const elTitle=document.getElementById('title');
+    const elCode=document.getElementById('code');
+    const elP=document.getElementById('plink');
+    const elR=document.getElementById('rlink');
+    const elQHost=document.getElementById('questionsHost');
+
+    // ---- Build question blocks dynamically (title + 5 options + timing) ----
+    function buildQuestionBlock(n){
+      const div = document.createElement('div');
+      div.className='qBlock';
+      div.innerHTML = `
+        <h4>Question ${n}</h4>
+        <input id="q${n}" placeholder="Question ${n} text"/>
+
+        <div class="optGrid">
+          <input id="q${n}_o1" placeholder="Option 1"/>
+          <input id="q${n}_o2" placeholder="Option 2"/>
+          <input id="q${n}_o3" placeholder="Option 3"/>
+          <input id="q${n}_o4" placeholder="Option 4"/>
+          <input id="q${n}_o5" placeholder="Option 5"/>
+        </div>
+
+        <label style="margin-top:10px;">Time</label>
+        <div class="timeRow">
+          <div class="twoCol">
+            <input id="t${n}" type="number" min="1" step="1" placeholder="Time value"/>
+            <select id="u${n}">
+              <option value="min" selected>Minutes</option>
+              <option value="sec">Seconds</option>
+            </select>
+          </div>
+          <label class="check"><input id="un${n}" type="checkbox" checked/> Unlimited</label>
+        </div>
+      `;
+      return div;
+    }
+    for(let n=1;n<=NUM_QUESTIONS;n++){ elQHost.appendChild(buildQuestionBlock(n)); }
+
+    function bindUnlimited(n){
+      const t=document.getElementById('t'+n);
+      const u=document.getElementById('u'+n);
+      const un=document.getElementById('un'+n);
+      function apply(){
+        const isUn = !!un.checked;
+        t.disabled = isUn;
+        u.disabled = isUn;
+        if(isUn) t.value='';
+      }
+      un.addEventListener('change', apply);
+      apply();
+    }
+    for(let n=1;n<=NUM_QUESTIONS;n++){ bindUnlimited(n); }
+
+    function readDurationSec(n){
+      const un=document.getElementById('un'+n).checked;
+      if(un) return null;
+      const raw=(document.getElementById('t'+n).value||'').trim();
+      const v=Number(raw);
+      if(!raw || !Number.isFinite(v) || v<=0){
+        throw new Error('Time for Question ' + n + ' must be a positive number, or set Unlimited.');
+      }
+      const unit=document.getElementById('u'+n).value;
+      const sec = unit==='min' ? v*60 : v;
+      return Math.round(sec);
+    }
+
+    function readOptions(n){
+      const opts=[];
+      for(let i=1;i<=NUM_OPTIONS;i++){
+        const v=(document.getElementById('q'+n+'_o'+i).value||'').trim();
+        opts.push(v || ('Option ' + i));
+      }
+      return opts;
+    }
+
+    document.getElementById('reset').onclick=()=>{
+      elBrandTitle.value=DEFAULT_BRAND_TITLE;
+      elBrandSub.value=DEFAULT_BRAND_SUB;
+      elTitle.value='';
+      elCode.value=''; elP.value=''; elR.value='';
+      elStatus.textContent='';
+
+      for(let n=1;n<=NUM_QUESTIONS;n++){
+        document.getElementById('q'+n).value='';
+        for(let i=1;i<=NUM_OPTIONS;i++){ document.getElementById('q'+n+'_o'+i).value=''; }
+        document.getElementById('un'+n).checked=true;
+        document.getElementById('t'+n).value='';
+        document.getElementById('u'+n).value='min';
+        bindUnlimited(n);
+      }
+    };
+
+    async function copy(v){
+      if(!v) return;
+      await navigator.clipboard.writeText(v);
+    }
+    document.getElementById('copyP').onclick=()=>copy(elP.value);
+    document.getElementById('copyR').onclick=()=>copy(elR.value);
+
+    document.getElementById('create').onclick=async()=>{
+      try{
+        elStatus.textContent='Creating...';
+
+        const brandTitle=(elBrandTitle.value||'').trim() || DEFAULT_BRAND_TITLE;
+        const brandSub=(elBrandSub.value||'').trim() || DEFAULT_BRAND_SUB;
+        const title=(elTitle.value||'').trim() || 'HSE Interactive Session';
+
+        const questions=[];
+        for(let n=1;n<=NUM_QUESTIONS;n++){
+          const qText=(document.getElementById('q'+n).value||'').trim() || ('Question ' + n);
+          const options = readOptions(n);
+          const durationSec = readDurationSec(n);
+          questions.push({ id:'q'+n, title:qText, options, durationSec });
+        }
+
+        const joinCode = genCode();
+        const codeDoc = await db.collection('codes').doc(joinCode).get();
+        const finalCode = codeDoc.exists ? genCode() : joinCode;
+
+        const docRef = await db.collection('events').add({
+          title,
+          joinCode: finalCode,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          currentQuestion: 0,
+          locked: false,
+          brand: { title: brandTitle, subtitle: brandSub },
+          headerTitle: brandTitle,
+          questions
+        });
+
+        await db.collection('codes').doc(finalCode).set({ eventId: docRef.id }, { merge:true });
+
+        const base = baseUrl();
+        elCode.value = finalCode;
+        elP.value = base + 'index.html?code=' + encodeURIComponent(finalCode);
+        elR.value = base + 'results.html?code=' + encodeURIComponent(finalCode) + '&kiosk=1';
+        elStatus.textContent='Created. EventId=' + docRef.id;
+      }catch(e){
+        console.error(e);
+        elStatus.textContent='Error: ' + (e && e.message ? e.message : e);
+      }
+    };
+  </script>
+</body>
+</html>

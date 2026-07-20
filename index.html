@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>CCED - Participate</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:#fff;color:#0b1b3a}
+    .wrap{max-width:900px;margin:0 auto;padding:18px 18px 90px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0 16px;border-bottom:1px solid #e9eef7}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{height:50px;width:auto}
+    .title{font-weight:900}
+    .card{background:#fff;border:1px solid #e9eef7;border-radius:16px;padding:18px;margin-top:16px;box-shadow:0 10px 30px rgba(16,24,40,.06)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .pill{padding:8px 12px;border-radius:999px;border:1px solid #e9eef7;background:#fff;font-weight:800}
+    .muted{color:#64748b;font-size:12px}
+    .msg{margin-top:10px;font-size:13px;color:#334155}
+
+    .optList{display:flex;flex-direction:column;gap:12px;margin-top:16px;}
+    .optBtn{
+      text-align:left;
+      border:2px solid #e9eef7;
+      background:#fff;
+      color:#0b2b55;
+      padding:16px 18px;
+      border-radius:14px;
+      font-size:17px;
+      font-weight:800;
+      cursor:pointer;
+      transition:all .15s ease;
+    }
+    .optBtn:hover{ border-color:#b9cdfa; background:#f7faff; }
+    .optBtn.selected{ border-color:#0b2b55; background:#0b2b55; color:#fff; transform:scale(1.01); }
+    .optBtn:disabled{ cursor:default; opacity:.85; }
+    .optBtn.selected:disabled{ opacity:1; }
+
+    .lockedNote{margin-top:14px;padding:12px 14px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;font-weight:800;font-size:13px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <img src="https://i.ibb.co/5xhDVpxs/1.png" alt="logo"/>
+        <div>
+          <div class="title" id="brandTitle">welcome to CCED forum interactive session</div>
+          <div class="muted">Participant</div>
+        </div>
+      </div>
+      <div class="muted">Live</div>
+    </div>
+
+    <div id="loading" class="card">Loading…</div>
+    <div id="err" class="card" style="display:none;border-color:#fecaca;background:#fff5f5;color:#7f1d1d;"></div>
+
+    <div id="main" class="card" style="display:none;">
+      <div style="font-weight:900;font-size:18px;" id="eventTitle"></div>
+      <div class="muted" style="margin-top:4px;">Select one answer for the current question.</div>
+
+      <div style="margin-top:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div class="pill" id="qIndicator">Question</div>
+        <div class="muted">Controlled by results screen</div>
+      </div>
+
+      <div style="margin-top:14px;font-size:22px;font-weight:900;" id="questionTitle"></div>
+
+      <div class="optList" id="optList"></div>
+      <div id="lockedNote" class="lockedNote" style="display:none;">This question is locked. Please wait for the next one.</div>
+
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="firebase-config.js"></script>
+  <script>
+    (function(){
+      try{
+        var cfg = window.firebaseConfig || window.firebase_config || (typeof firebaseConfig !== 'undefined' ? firebaseConfig : null);
+        if(!cfg){ throw new Error("Firebase config not found. Please refresh cache and ensure firebase-config.js is deployed."); }
+        if(!firebase.apps || !firebase.apps.length){ firebase.initializeApp(cfg); }
+        if(!window.db) window.db = firebase.firestore();
+      }catch(e){
+        console.error(e);
+        var errEl = document.getElementById('err');
+        var loadingEl = document.getElementById('loading');
+        if(loadingEl) loadingEl.style.display='none';
+        if(errEl){
+          errEl.style.display='block';
+          errEl.textContent = "Cannot connect to Firebase. Check network/firewall and set phone time to Automatic. " + e.message;
+        }else{
+          alert("Cannot connect to Firebase: " + e.message);
+        }
+      }
+    })();
+  </script>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+
+    const elLoading=document.getElementById('loading');
+    const elErr=document.getElementById('err');
+    const elMain=document.getElementById('main');
+    const elEventTitle=document.getElementById('eventTitle');
+    const elQIndicator=document.getElementById('qIndicator');
+    const elQTitle=document.getElementById('questionTitle');
+    const elOptList=document.getElementById('optList');
+    const elLockedNote=document.getElementById('lockedNote');
+    const elMsg=document.getElementById('msg');
+
+    let eventId=null, questions=[], currentIndex=0, locked=false;
+    let submitting=false;
+
+    function storageKey(qId){ return 'cced_ans_' + eventId + '_' + qId; }
+    function getSavedAnswer(qId){
+      try{ return localStorage.getItem(storageKey(qId)); }catch(e){ return null; }
+    }
+    function saveAnswer(qId, optionIndex){
+      try{ localStorage.setItem(storageKey(qId), String(optionIndex)); }catch(e){}
+    }
+
+    function showError(t){
+      elLoading.style.display='none';
+      elMain.style.display='none';
+      elErr.style.display='block';
+      elErr.textContent=t;
+    }
+
+    async function selectOption(q, optionIndex, btn){
+      if(submitting) return;
+      if(locked){ elMsg.textContent='Question is locked.'; return; }
+      const already = getSavedAnswer(q.id);
+      if(already !== null){ return; }
+
+      submitting=true;
+      const allBtns = elOptList.querySelectorAll('.optBtn');
+      allBtns.forEach(b=>b.disabled=true);
+      btn.classList.add('selected');
+      elMsg.textContent='Submitting...';
+
+      try{
+        await db.collection('events').doc(eventId).collection('answers').add({
+          questionId: q.id,
+          optionIndex,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        saveAnswer(q.id, optionIndex);
+        elMsg.textContent='Submitted. Thank you!';
+      }catch(e){
+        console.error(e);
+        elMsg.textContent='Cannot submit (network blocked). Use hotspot or allow Firebase access.';
+        allBtns.forEach(b=>b.disabled=false);
+        btn.classList.remove('selected');
+      }finally{
+        submitting=false;
+      }
+    }
+
+    function render(){
+      elLockedNote.style.display = locked ? 'block' : 'none';
+      elOptList.innerHTML='';
+      elMsg.textContent='';
+
+      if(!questions.length){
+        elQIndicator.textContent='Question';
+        elQTitle.textContent='';
+        return;
+      }
+
+      const q=questions[currentIndex] || questions[0];
+      elQIndicator.textContent=String(currentIndex+1);
+      elQTitle.textContent=q.title || '';
+
+      const opts = Array.isArray(q.options) && q.options.length ? q.options : [];
+      const savedRaw = getSavedAnswer(q.id);
+      const saved = savedRaw !== null ? Number(savedRaw) : null;
+
+      opts.forEach((optText, idx)=>{
+        const btn=document.createElement('button');
+        btn.type='button';
+        btn.className='optBtn';
+        btn.textContent = optText;
+        if(saved !== null){
+          btn.disabled = true;
+          if(idx === saved) btn.classList.add('selected');
+        } else if(locked){
+          btn.disabled = true;
+        }
+        btn.onclick = ()=> selectOption(q, idx, btn);
+        elOptList.appendChild(btn);
+      });
+
+      if(saved !== null){ elMsg.textContent='Submitted. Thank you!'; }
+    }
+
+    async function resolveEventId(){
+      if(!code) return null;
+      const snap = await Promise.race([
+        db.collection('codes').doc(code).get(),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timeout contacting Firestore')), 8000))
+      ]);
+      if(!snap.exists) return null;
+      const data = snap.data() || {};
+      return data.eventId || null;
+    }
+
+    (async function start(){
+      try{
+        eventId = await resolveEventId();
+        if(!eventId) return showError('Invalid join code. Please scan the correct QR / link.');
+
+        const eventRef = db.collection('events').doc(eventId);
+        eventRef.onSnapshot((snap)=>{
+          if(!snap.exists) return showError('Event not found. Ask facilitator to recreate.');
+          const data=snap.data()||{};
+          const headerTitle = (data.headerTitle) || (data.brand && data.brand.title) || 'welcome to CCED forum interactive session';
+          const elBrandTitle = document.getElementById('brandTitle');
+          if(elBrandTitle) elBrandTitle.textContent = headerTitle;
+
+          questions = Array.isArray(data.questions)?data.questions:[];
+          currentIndex = (typeof data.currentQuestion==='number') ? data.currentQuestion : 0;
+          locked = !!data.locked;
+          elEventTitle.textContent = data.title || 'HSE Interactive Session';
+
+          elLoading.style.display='none';
+          elErr.style.display='none';
+          elMain.style.display='block';
+          render();
+        }, (err)=>{
+          console.error(err);
+          showError('Cannot read event (network blocked). Use hotspot or allow Firebase access.');
+        });
+      }catch(e){
+        console.error(e);
+        showError('Error loading.');
+      }
+    })();
+  </script>
+</body>
+</html>
