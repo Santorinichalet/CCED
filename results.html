@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>CCED - Results</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:#ffffff;color:#0b1b3a}
+    .top{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid #e9eef7}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{height:52px;width:auto;background:#fff;border:1px solid #e9eef7;border-radius:10px;padding:6px}
+    .welcome{font-weight:900;font-size:16px}
+    .panel{display:grid;grid-template-columns:360px 1fr;gap:22px;padding:18px 22px 90px}
+    @media(max-width:980px){.panel{grid-template-columns:1fr}}
+    .card{background:#fff;border:1px solid #e9eef7;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(16,24,40,.06)}
+    .qrBox{background:#fff;border-radius:16px;padding:12px;display:inline-block;border:1px solid #e9eef7}
+    .joinBig{font-size:34px;font-weight:900;line-height:1.05;margin:10px 0 6px}
+    .code{font-size:44px;font-weight:900;letter-spacing:3px}
+    .qTitle{font-size:38px;font-weight:900;line-height:1.15;margin:0 0 22px}
+    .muted{color:#64748b;font-size:12px}
+    .bottom{position:fixed;left:0;right:0;bottom:0;background:#ffffff;border-top:1px solid #e9eef7;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .btn{border:1px solid #e9eef7;background:#f8fafc;border-radius:12px;padding:10px 14px;font-weight:900;cursor:pointer;color:#0b1b3a}
+    .btn.primary{background:#0b2b55;color:#fff;border-color:#0b2b55}
+    .btn.danger{background:#fff5f5;border-color:#fecaca;color:#7f1d1d}
+    .pill{padding:8px 12px;border-radius:999px;border:1px solid #e9eef7;background:#fff;font-weight:800}
+
+    /* ===== Live bar chart ===== */
+    .barsWrap{display:flex;flex-direction:column;gap:16px;min-height:56vh;justify-content:center;padding:6px 4px;}
+    .barRow{display:grid;grid-template-columns:220px 1fr 70px;align-items:center;gap:14px;}
+    @media(max-width:760px){.barRow{grid-template-columns:120px 1fr 50px;}}
+    .barLabel{font-weight:800;font-size:15px;color:#0b1b3a;overflow-wrap:anywhere;}
+    .barTrack{position:relative;height:36px;background:#eef2f7;border-radius:10px;overflow:hidden;}
+    .barFill{
+      position:absolute; left:0; top:0; bottom:0; width:0%;
+      border-radius:10px;
+      transition:width .55s cubic-bezier(.22,.9,.32,1);
+      display:flex; align-items:center; justify-content:flex-end;
+      padding-right:8px;
+    }
+    .barPct{color:#fff;font-weight:900;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,.25);}
+    .barCount{font-weight:900;font-size:18px;text-align:right;color:#0b2b55;transition:transform .18s ease;}
+    .barCount.bump{transform:scale(1.35);}
+
+    @keyframes fillPulse { 0%{ filter:brightness(1);} 50%{ filter:brightness(1.25);} 100%{ filter:brightness(1);} }
+    .barFill.justUpdated{ animation: fillPulse .5s ease; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">
+      <img src="https://i.ibb.co/5xhDVpxs/1.png" alt="logo"/>
+      <div class="welcome" id="brandTitle">welcome to CCED forum interactive session</div>
+    </div>
+    <div class="muted">Results</div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <div class="qrBox" id="qr"></div>
+      <div class="joinBig" style="margin-top:14px;">Join</div>
+      <div class="muted">Scan the QR or use the code</div>
+      <div style="margin-top:14px;" class="code" id="joinCode">------</div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="pill" id="qIndicator">Question</div>
+        <div class="pill"><span id="respCount">0</span> responses</div>
+      </div>
+
+      <div style="margin-top:14px;" class="qTitle" id="questionTitle"></div>
+      <div class="barsWrap" id="bars"></div>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div style="display:flex;gap:10px;align-items:center;">
+      <button class="btn" id="prev">Prev</button>
+      <button class="btn primary" id="next">Next</button>
+      <button class="btn" id="clear">Clear</button>
+      <button class="btn danger" id="resetEvent">Reset</button>
+    </div>
+    <div class="muted" id="eventState"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="firebase-config.js"></script>
+
+  <script>
+    // NOTE: do not call db.settings() again here — it's already configured
+    // once in firebase-config.js. Calling settings() a second time causes
+    // "overriding the original host" and breaks the connection intermittently.
+    (function initFirebase(){
+      try{
+        const cfg = window.firebaseConfig;
+        if(!cfg){ console.error('Missing firebaseConfig'); return; }
+        if(!firebase.apps || !firebase.apps.length){
+          firebase.initializeApp(cfg);
+        }
+        if(!window.db) window.db = firebase.firestore();
+      }catch(e){
+        console.error('Firebase init failed', e);
+      }
+    })();
+  </script>
+
+<script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+
+    const elJoin = document.getElementById('joinCode');
+    const elQIndicator = document.getElementById('qIndicator');
+    const elQTitle = document.getElementById('questionTitle');
+    const elBars = document.getElementById('bars');
+    const elResp = document.getElementById('respCount');
+    const elEventState = document.getElementById('eventState');
+
+    let eventId=null, questions=[], currentIndex=0, joinCode=null;
+    let unsubAnswers=null;
+    let prevCounts=[]; // for bump animation
+
+    const BAR_COLORS = ['#00b3a6','#3b82f6','#f59e0b','#ef4444','#8b5cf6'];
+
+    function baseUrl(){
+      const u = new URL(location.href);
+      const basePath = u.pathname.substring(0, u.pathname.lastIndexOf('/') + 1);
+      return u.origin + basePath;
+    }
+
+    async function resolveEventId(){
+      if(!code) return null;
+      const snap = await db.collection('codes').doc(code).get();
+      if(!snap.exists) return null;
+      const data = snap.data() || {};
+      return data.eventId || null;
+    }
+
+    // ===== Live animated bar chart =====
+    function renderBarChart(options, counts){
+      const total = counts.reduce((a,b)=>a+b,0);
+
+      let rows = elBars.querySelectorAll('.barRow');
+      if(rows.length !== options.length){
+        elBars.innerHTML='';
+        options.forEach((label, i)=>{
+          const row=document.createElement('div');
+          row.className='barRow';
+          row.innerHTML = `
+            <div class="barLabel">${label}</div>
+            <div class="barTrack">
+              <div class="barFill" id="fill${i}" style="background:${BAR_COLORS[i % BAR_COLORS.length]}">
+                <span class="barPct" id="pct${i}"></span>
+              </div>
+            </div>
+            <div class="barCount" id="count${i}">0</div>
+          `;
+          elBars.appendChild(row);
+        });
+        rows = elBars.querySelectorAll('.barRow');
+      }
+
+      options.forEach((label, i)=>{
+        const c = counts[i] || 0;
+        const pct = total > 0 ? Math.round((c/total)*100) : 0;
+
+        const fillEl = document.getElementById('fill'+i);
+        const pctEl = document.getElementById('pct'+i);
+        const countEl = document.getElementById('count'+i);
+        if(!fillEl || !countEl) return;
+
+        fillEl.style.width = pct + '%';
+        if(pctEl) pctEl.textContent = pct > 12 ? (pct + '%') : '';
+
+        const prev = prevCounts[i] || 0;
+        countEl.textContent = String(c);
+        if(c !== prev){
+          countEl.classList.remove('bump');
+          void countEl.offsetWidth; // restart animation
+          countEl.classList.add('bump');
+          fillEl.classList.remove('justUpdated');
+          void fillEl.offsetWidth;
+          fillEl.classList.add('justUpdated');
+          setTimeout(()=>countEl.classList.remove('bump'), 220);
+        }
+      });
+
+      prevCounts = counts.slice();
+    }
+
+    function listenAnswers(){
+      if(typeof unsubAnswers==='function') unsubAnswers();
+      if(!eventId || !questions.length) return;
+
+      prevCounts = [];
+
+      const q = questions[currentIndex];
+      const options = Array.isArray(q.options) && q.options.length ? q.options : [];
+
+      let ref = db.collection('events').doc(eventId).collection('answers')
+        .where('questionId','==', q.id)
+        .limit(2000);
+
+      unsubAnswers = ref.onSnapshot((snap)=>{
+        elResp.textContent=String(snap.size);
+
+        const counts = new Array(options.length).fill(0);
+        snap.forEach(doc=>{
+          const d=doc.data()||{};
+          const idx = Number(d.optionIndex);
+          if(Number.isInteger(idx) && idx>=0 && idx<counts.length){
+            counts[idx]++;
+          }
+        });
+        renderBarChart(options, counts);
+      }, (err)=>{
+        console.error(err);
+      });
+    }
+
+    function renderHeader(){
+      if(!questions.length){
+        elQIndicator.textContent='Question';
+        elQTitle.textContent='';
+        return;
+      }
+      const q=questions[currentIndex];
+      elQIndicator.textContent=String(currentIndex+1);
+      elQTitle.textContent=q.title || '';
+    }
+
+    async function setCurrentQuestion(i){
+      if(!eventId) return;
+      if(i<0) i=0;
+      if(i>=questions.length) i=questions.length-1;
+      await db.collection('events').doc(eventId).set({ currentQuestion:i }, { merge:true });
+    }
+
+    function setupQR(){
+      const pLink = baseUrl() + 'index.html?code=' + encodeURIComponent(joinCode || code);
+      const qrEl=document.getElementById('qr');
+      qrEl.innerHTML='';
+      new QRCode(qrEl, { text: pLink, width: 280, height: 280 });
+    }
+
+    async function clearCurrentQuestionAnswers(){
+      if(!eventId || !questions.length) return 0;
+      const q = questions[currentIndex];
+
+      const snap = await db.collection('events')
+        .doc(eventId)
+        .collection('answers')
+        .where('questionId','==', q.id)
+        .get();
+
+      if(snap.empty) return 0;
+
+      let batch = db.batch();
+      let n = 0, deleted = 0;
+
+      for(const doc of snap.docs){
+        batch.delete(doc.ref);
+        n++; deleted++;
+        if(n === 450){
+          await batch.commit();
+          batch = db.batch();
+          n = 0;
+        }
+      }
+      if(n > 0) await batch.commit();
+      return deleted;
+    }
+
+    async function resetEventAll(){
+      if(!eventId) return;
+      const answersCol = db.collection('events').doc(eventId).collection('answers');
+
+      let totalDeleted = 0;
+      while(true){
+        const snap = await answersCol.limit(450).get();
+        if(snap.empty) break;
+        let batch = db.batch();
+        for(const doc of snap.docs){
+          batch.delete(doc.ref);
+          totalDeleted++;
+        }
+        await batch.commit();
+      }
+
+      await db.collection('events').doc(eventId).set({
+        currentQuestion: 0
+      }, { merge:true });
+
+      return totalDeleted;
+    }
+
+    document.getElementById('prev').onclick=()=>setCurrentQuestion(currentIndex-1);
+    document.getElementById('next').onclick=()=>setCurrentQuestion(currentIndex+1);
+
+    document.getElementById('clear').onclick = async () => {
+      try{
+        const ok = confirm("Clear responses for this question?");
+        if(!ok) return;
+        elEventState.textContent = "Clearing...";
+        const n = await clearCurrentQuestionAnswers();
+        elEventState.textContent = n ? (`Cleared ${n}`) : "No responses";
+        setTimeout(()=>elEventState.textContent="", 1800);
+      }catch(e){
+        console.error(e);
+        elEventState.textContent = "Failed to clear";
+        setTimeout(()=>elEventState.textContent="", 2000);
+      }
+    };
+
+    document.getElementById('resetEvent').onclick = async () => {
+      const ok = confirm("RESET event? This will delete ALL responses and go back to Q1.");
+      if(!ok) return;
+      try{
+        elEventState.textContent = "Resetting...";
+        const n = await resetEventAll();
+        elEventState.textContent = `Reset done (deleted ${n})`;
+        setTimeout(()=>elEventState.textContent="", 2200);
+      }catch(e){
+        console.error(e);
+        elEventState.textContent = "Reset failed";
+        setTimeout(()=>elEventState.textContent="", 2200);
+      }
+    };
+
+    (async function start(){
+      if(!code){ elEventState.textContent=''; return; }
+      eventId = await resolveEventId();
+      if(!eventId){ elEventState.textContent=''; return; }
+
+      const eventRef = db.collection('events').doc(eventId);
+      eventRef.onSnapshot((snap)=>{
+        if(!snap.exists){ elEventState.textContent=''; return; }
+        const data=snap.data()||{};
+        const headerTitle = (data.headerTitle) || (data.brand && data.brand.title) || 'welcome to CCED forum interactive session';
+        const elBrandTitle = document.getElementById('brandTitle');
+        if(elBrandTitle) elBrandTitle.textContent = headerTitle;
+
+        joinCode=data.joinCode || code;
+        elJoin.textContent=joinCode;
+
+        questions = Array.isArray(data.questions)?data.questions:[];
+        currentIndex = (typeof data.currentQuestion==='number') ? data.currentQuestion : 0;
+
+        setupQR();
+        renderHeader();
+        listenAnswers();
+        elEventState.textContent='';
+      }, ()=>{ elEventState.textContent=''; });
+    })();
+  </script>
+</body>
+</html>
